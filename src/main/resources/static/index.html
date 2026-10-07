@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Java Web Viewer</title>
+  <style>
+    :root{
+      --bg:#0b1020;--panel:#111a2e;--panel2:#17223a;--text:#eef4ff;
+      --muted:#9fb0ca;--line:#2a3854;--accent:#377cf2
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;height:100%;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--text)}
+    body{overflow:hidden}
+    .app{height:100vh;display:grid;grid-template-rows:auto 1fr auto}
+    .bar{display:flex;align-items:center;gap:8px;padding:10px;background:var(--panel);border-bottom:1px solid var(--line)}
+    button{height:40px;border:1px solid var(--line);border-radius:11px;background:var(--panel2);color:var(--text);font-weight:800;cursor:pointer;padding:0 13px}
+    button:hover{filter:brightness(1.12)}
+    .round{width:40px;padding:0;font-size:18px}
+    .url{display:flex;align-items:center;gap:8px;flex:1;height:42px;border:1px solid var(--line);background:#080f1d;border-radius:12px;padding:0 12px}
+    .url input{width:100%;height:100%;border:0;outline:0;background:transparent;color:var(--text);font-size:15px}
+    .go{background:var(--accent)}
+    iframe{border:0;width:100%;height:100%;background:white}
+    .status{padding:7px 12px;background:#0c1322;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+    .status b{color:var(--text)}
+    @media(max-width:620px){.hide-mobile{display:none}.bar{gap:6px}.round{width:36px}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <button class="round" id="back" title="Voltar">←</button>
+    <button class="round" id="forward" title="Avançar">→</button>
+    <button class="round" id="reload" title="Recarregar">↻</button>
+    <button class="round hide-mobile" id="home" title="Início">⌂</button>
+
+    <form class="url" id="form">
+      <span>🔒</span>
+      <input id="address" autocomplete="off" spellcheck="false"
+             placeholder="Digite wikipedia.org, example.com...">
+    </form>
+
+    <button class="go" id="go">Ir</button>
+  </header>
+
+  <iframe id="viewer" srcdoc="
+    <style>
+      body{font-family:system-ui;background:#f5f7fb;color:#172033;display:grid;place-items:center;height:95vh;margin:0}
+      .x{text-align:center;max-width:650px;padding:24px}
+      h1{font-size:42px;margin:0 0 8px}p{color:#66758c;line-height:1.6}
+    </style>
+    <div class='x'><h1>Java Web Viewer</h1><p>Digite um endereço permitido na barra acima. A página será carregada pelo backend Java e continuará visualmente dentro deste site.</p></div>
+  "></iframe>
+
+  <footer class="status" id="status">
+    <b>Modo protegido:</b> páginas são simplificadas; scripts, formulários e embeds externos são removidos.
+  </footer>
+</div>
+
+<script>
+  const frame = document.getElementById('viewer');
+  const address = document.getElementById('address');
+  const status = document.getElementById('status');
+
+  function normalize(value){
+    value = value.trim();
+    if(!value) return '';
+    if(!/^https?:\/\//i.test(value)) value = 'https://' + value;
+    return value;
+  }
+
+  function openAddress(){
+    const url = normalize(address.value);
+    if(!url) return;
+    status.innerHTML = '<b>Abrindo:</b> ' + escapeHtml(url);
+    frame.src = '/api/view?url=' + encodeURIComponent(url);
+  }
+
+  function escapeHtml(s){
+    return s.replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+    }[c]));
+  }
+
+  document.getElementById('form').addEventListener('submit', e => {
+    e.preventDefault();
+    openAddress();
+  });
+  document.getElementById('go').addEventListener('click', openAddress);
+  document.getElementById('back').addEventListener('click', () => {
+    try { frame.contentWindow.history.back(); } catch(e) {}
+  });
+  document.getElementById('forward').addEventListener('click', () => {
+    try { frame.contentWindow.history.forward(); } catch(e) {}
+  });
+  document.getElementById('reload').addEventListener('click', () => {
+    try { frame.contentWindow.location.reload(); } catch(e) { frame.src = frame.src; }
+  });
+  document.getElementById('home').addEventListener('click', () => {
+    frame.src = 'about:blank';
+    address.value = '';
+    status.innerHTML = '<b>Início.</b> Digite um endereço permitido.';
+  });
+
+  window.addEventListener('message', e => {
+    if(e.origin !== location.origin) return;
+    if(e.data?.type === 'viewer-location' && e.data.url){
+      address.value = e.data.url;
+      status.innerHTML = '<b>Carregado:</b> ' + escapeHtml(e.data.url);
+    }
+  });
+</script>
+</body>
+</html>
