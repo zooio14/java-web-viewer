@@ -57,4 +57,18 @@ class SessionAuthTest {
             assertFalse(RequestSecurity.sameOrigin(request), origin);
         }
     }
+
+    @Test void cspAllowsOnlyTheViewerWebsocketOriginWithoutWeakeningScripts() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/");
+        request.setScheme("https"); request.setSecure(true);
+        request.setServerName("viewer.example.com"); request.setServerPort(443);
+        org.springframework.mock.web.MockHttpServletResponse response = new org.springframework.mock.web.MockHttpServletResponse();
+        new RequestSecurity().doFilter(request, response, new org.springframework.mock.web.MockFilterChain());
+        String csp = response.getHeader("Content-Security-Policy");
+        assertNotNull(csp);
+        assertTrue(csp.contains("connect-src 'self' wss://viewer.example.com:443;"));
+        assertTrue(csp.contains("script-src 'self';"));
+        assertFalse(csp.contains("unsafe-eval"));
+        assertFalse(csp.contains("unsafe-inline"));
+    }
 }

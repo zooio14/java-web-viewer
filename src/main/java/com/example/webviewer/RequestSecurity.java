@@ -19,7 +19,14 @@ public class RequestSecurity extends OncePerRequestFilter {
         response.setHeader("X-Frame-Options", "DENY");
         response.setHeader("Referrer-Policy", "no-referrer");
         response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-        response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+        // Explicit same-origin WS source supports browsers that do not map 'self' to ws/wss.
+        String websocketSource = "";
+        try {
+            websocketSource = " " + new URI(request.isSecure() ? "wss" : "ws", null,
+                    request.getServerName(), request.getServerPort(), null, null, null).toASCIIString();
+        } catch (java.net.URISyntaxException ignored) { }
+        response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'"
+                + websocketSource + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
         response.setHeader("Cache-Control", "no-store");
         // Guard mutations regardless of path decoding or matrix parameters used by MVC routing.
         if ("POST".equals(request.getMethod())) {
