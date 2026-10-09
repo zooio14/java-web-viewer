@@ -4,6 +4,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.microsoft.playwright.*;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.boot.SpringApplication;
@@ -12,12 +14,15 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.web.socket.*;
 
 import javax.imageio.ImageIO;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
 import java.awt.image.BufferedImage;
 import java.io.*;
 import java.net.*;
 import java.net.http.*;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.*;
@@ -31,6 +36,89 @@ import static org.mockito.Mockito.*;
 @EnabledIfSystemProperty(named = "viewer.browser-tests", matches = "true")
 class BrowserSmokeTest {
     private static final String TOKEN = "test-only-token-never-use-in-deployment-123456";
+
+    @Test void realHttpsBrowserUsesAuthenticatedConnectAndRejectsPrivateDestinations() throws Exception {
+        // A committed, self-signed fixture key is test data, never a deployment credential.
+        char[] fixturePassword = "fixture-only-not-a-deployment-secret".toCharArray();
+        KeyStore keys = KeyStore.getInstance("PKCS12");
+        try (InputStream source = BrowserSmokeTest.class.getResourceAsStream("/https-fixture.p12")) {
+            assertNotNull(source, "HTTPS test certificate missing");
+            keys.load(source, fixturePassword);
+        }
+        KeyManagerFactory managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        managers.init(keys, fixturePassword);
+        SSLContext tls = SSLContext.getInstance("TLS");
+        tls.init(managers.getKeyManagers(), null, null);
+        HttpsServer fixture = HttpsServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        fixture.setHttpsConfigurator(new HttpsConfigurator(tls));
+        AtomicInteger results = new AtomicInteger();
+        AtomicInteger privateRequests = new AtomicInteger();
+        AtomicInteger publicConnections = new AtomicInteger();
+        AtomicInteger privateResolutions = new AtomicInteger();
+        AtomicInteger blockedBrowserRequests = new AtomicInteger();
+        fixture.createContext("/fixture", exchange -> {
+            byte[] body = """
+                <!doctype html><html><meta charset="utf-8"><title>HTTPS fixture</title><link rel="icon" href="data:,">
+                <body>Fixture HTTPS<script>
+                fetch('/result').then(response=>response.json()).then(result=>document.title=result.status);
+                </script></body></html>
+                """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body); exchange.close();
+        });
+        fixture.createContext("/result", exchange -> {
+            results.incrementAndGet();
+            byte[] body = "{\"status\":\"HTTPS pronto\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json; charset=utf-8");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body); exchange.close();
+        });
+        fixture.createContext("/private", exchange -> {
+            privateRequests.incrementAndGet();
+            exchange.sendResponseHeaders(204, -1); exchange.close();
+        });
+        fixture.start();
+        try (SecurityPolicy policy = new SecurityPolicy("example.com", "public", hostname -> {
+                    boolean privateHost = hostname.equals("private.example.net");
+                    if (privateHost) privateResolutions.incrementAndGet();
+                    return new InetAddress[]{InetAddress.getByName(privateHost ? "127.0.0.1" : "93.184.215.14")};
+                });
+                EgressProxy egress = new EgressProxy(policy, (address, port, timeout) -> {
+                    assertEquals("93.184.215.14", address.getHostAddress());
+                    assertEquals(443, port, "HTTPS must use the guarded CONNECT tunnel");
+                    publicConnections.incrementAndGet();
+                    // Only this test connector maps a validated public address to the local TLS fixture.
+                    return new Socket("127.0.0.1", fixture.getAddress().getPort());
+                });
+                Playwright playwright = Playwright.create(new Playwright.CreateOptions().setEnv(BrowserManager.driverEnvironment()));
+                Browser browser = BrowserSession.launch(playwright, SessionAuthTest.settings(TOKEN), egress);
+                BrowserContext context = browser.newContext(new Browser.NewContextOptions()
+                        .setIgnoreHTTPSErrors(true)
+                        .setServiceWorkers(com.microsoft.playwright.options.ServiceWorkerPolicy.BLOCK))) {
+            // Certificate errors are ignored only in this test context for the self-signed fixture.
+            BrowserSession.configure(context, policy, ignored -> blockedBrowserRequests.incrementAndGet());
+            Page page = context.newPage();
+            page.setDefaultTimeout(10000);
+            page.setDefaultNavigationTimeout(15000);
+            page.navigate("https://example.net/fixture");
+            com.microsoft.playwright.assertions.PlaywrightAssertions.assertThat(page).hasTitle("HTTPS pronto");
+            assertEquals(1, results.get(), "The page's JavaScript fetch must reach the HTTPS fixture");
+            assertTrue(publicConnections.get() > 0, "Authenticated HTTPS CONNECT did not reach the test connector");
+            int connectedBeforePrivateRequests = publicConnections.get();
+            Object denied = page.evaluate("""
+                async () => Promise.all([
+                  'https://127.0.0.1/private',
+                  'https://private.example.net/private'
+                ].map(url=>fetch(url).then(()=>false,()=>true)))
+                """);
+            assertEquals(List.of(true, true), denied, "Both private destinations must fail in the real browser");
+            assertTrue(blockedBrowserRequests.get() > 0, "Literal localhost must be blocked before browser egress");
+            assertTrue(privateResolutions.get() > 0, "Private DNS must be checked at the CONNECT boundary");
+            assertEquals(connectedBeforePrivateRequests, publicConnections.get(), "Private DNS must not reach the connector");
+            assertEquals(0, privateRequests.get(), "No private HTTPS request may reach the fixture");
+        } finally { fixture.stop(0); }
+    }
 
     @Test void realBrowserStreamsJpegAndReceivesMouseKeyboardWithGuardedEgress() throws Exception {
         HttpServer fixture = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

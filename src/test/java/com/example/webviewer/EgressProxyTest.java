@@ -11,6 +11,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -19,6 +20,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -215,14 +217,73 @@ class EgressProxyTest {
              EgressProxy second = new EgressProxy(policy)) {
             assertNotEquals(first.password(), second.password());
             URI endpoint = URI.create(first.endpoint());
+            InetSocketAddress address = new InetSocketAddress(endpoint.getHost(), endpoint.getPort());
+            try (ServerSocket occupied = new ServerSocket()) {
+                assertThrows(IOException.class, () -> occupied.bind(address, 1));
+            }
             first.close();
             first.close();
             assertFalse(first.isRunning());
-            try (Socket socket = new Socket()) {
-                assertThrows(IOException.class, () -> socket.connect(new InetSocketAddress(
-                        endpoint.getHost(), endpoint.getPort()), 1_000));
+            // Rebinding verifies release of the proxy's own listener, avoiding a connection
+            // probe whose ephemeral client port can itself be reused on Linux.
+            try (ServerSocket released = new ServerSocket()) {
+                assertDoesNotThrow(() -> released.bind(address, 1));
             }
             assertTrue(second.isRunning());
+        }
+    }
+
+    @Test
+    void closeTerminatesBothSidesOfEstablishedTunnel() throws Exception {
+        try (Upstream upstream = new Upstream(); SecurityPolicy policy = publicPolicy();
+             EgressProxy proxy = new EgressProxy(policy, (address, port, timeout) -> upstream.connect());
+             Socket client = client(proxy)) {
+            CompletableFuture<Socket> accepted = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return upstream.server.accept();
+                } catch (IOException ex) {
+                    throw new IllegalStateException(ex);
+                }
+            }, upstream.worker);
+            client.getOutputStream().write(("CONNECT example.com:443 HTTP/1.1\r\n"
+                    + auth(proxy) + "\r\n").getBytes(StandardCharsets.US_ASCII));
+            client.getOutputStream().flush();
+            assertEquals("HTTP/1.1 200 Connection Established\r\n\r\n", readHeader(client.getInputStream()));
+            try (Socket peer = accepted.get(5, TimeUnit.SECONDS)) {
+                peer.setSoTimeout(2_000);
+                client.setSoTimeout(2_000);
+                proxy.close();
+                assertFalse(proxy.isRunning());
+                assertClosedInput(client);
+                assertClosedInput(peer);
+            }
+        }
+    }
+
+    @Test
+    void closePreservesCallingThreadsInterrupt() throws Exception {
+        try (SecurityPolicy policy = publicPolicy(); EgressProxy proxy = new EgressProxy(policy)) {
+            AtomicBoolean interrupted = new AtomicBoolean();
+            Thread caller = new Thread(() -> {
+                Thread.currentThread().interrupt();
+                proxy.close();
+                interrupted.set(Thread.currentThread().isInterrupted());
+            });
+            caller.start();
+            caller.join(2_000);
+            assertFalse(caller.isAlive(), "Interrupted shutdown must return promptly");
+            assertTrue(interrupted.get(), "Shutdown must preserve the caller's interrupt status");
+            assertFalse(proxy.isRunning());
+        }
+    }
+
+    private static void assertClosedInput(Socket socket) throws IOException {
+        try {
+            assertEquals(-1, socket.getInputStream().read(), "Shutdown must terminate the tunnel");
+        } catch (SocketTimeoutException ex) {
+            fail("Shutdown left a tunnel socket open", ex);
+        } catch (SocketException closedOrReset) {
+            // A closed/reset connection also proves termination; an idle timeout does not.
         }
     }
 

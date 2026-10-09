@@ -391,6 +391,15 @@ public final class EgressProxy implements AutoCloseable {
             closeSocket(socket);
         }
         workers.shutdownNow();
+        // ServerSocket.close may defer the native descriptor close until a pending accept exits.
+        // Finish that listener lifecycle before returning, without joining the acceptor itself.
+        if (Thread.currentThread() != acceptor) {
+            try {
+                acceptor.join(2_000);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private static String randomCredential() {
