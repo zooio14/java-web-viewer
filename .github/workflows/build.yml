@@ -1,0 +1,116 @@
+name: Build and browser smoke test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [17, 25]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Build and test
+        run: mvn --batch-mode --no-transfer-progress verify
+
+  browser-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Install the Chromium version declared by Playwright
+        run: >-
+          mvn --batch-mode --no-transfer-progress exec:java
+          -Dexec.mainClass=com.microsoft.playwright.CLI
+          -Dexec.args="install --with-deps chromium"
+      - name: Exercise the real browser with controlled test content
+        # The hosted runner may restrict user namespaces. The smoke test visits
+        # controlled content only; deployed browsers default to sandbox=true.
+        env:
+          VIEWER_CHROMIUM_SANDBOX: 'false'
+        run: mvn --batch-mode --no-transfer-progress -Dviewer.browser-tests=true verify
+
+  docker:
+    needs: [build, browser-smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the Railway image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: java-web-viewer:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Exercise the Chromium and driver shipped in the built image
+        # The official runtime includes Maven. Copy the read-only test sources
+        # into temporary container storage; no source files enter the final image.
+        # This checks the shipped browser version as pwuser, with controlled
+        # content and an explicit sandbox opt-out for the hosted CI environment.
+        run: |
+          docker run --rm --user pwuser --entrypoint /bin/sh \
+            --env VIEWER_CHROMIUM_SANDBOX=false \
+            --mount type=bind,src="$PWD",dst=/source,readonly \
+            java-web-viewer:ci -c '
+              set -eu
+              mkdir -p /tmp/viewer-smoke
+              cp /source/pom.xml /tmp/viewer-smoke/
+              cp -R /source/src /tmp/viewer-smoke/
+              cd /tmp/viewer-smoke
+              mvn --batch-mode --no-transfer-progress -Dviewer.browser-tests=true verify
+            '
+      - name: Check image startup, custom port and readiness
+        run: |
+          docker run --detach --name viewer-ci --publish 18080:9090 --env PORT=9090 java-web-viewer:ci
+          ready=false
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:18080/health; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != true ]; then
+            docker logs viewer-ci
+            exit 1
+          fi
+          curl --fail --silent http://127.0.0.1:18080/ > /dev/null
+          test "$(docker exec viewer-ci id -u)" != 0
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs viewer-ci || true
+      - name: Stop the container
+        if: always()
+        run: docker rm --force viewer-ci || true

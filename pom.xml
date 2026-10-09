@@ -18,7 +18,8 @@
 
   <properties>
     <java.version>17</java.version>
-    <jsoup.version>1.23.2</jsoup.version>
+    <playwright.version>1.63.0</playwright.version>
+    <guava.version>33.7.2-jre</guava.version>
   </properties>
 
   <dependencies>
@@ -28,9 +29,23 @@
     </dependency>
 
     <dependency>
-      <groupId>org.jsoup</groupId>
-      <artifactId>jsoup</artifactId>
-      <version>${jsoup.version}</version>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.microsoft.playwright</groupId>
+      <artifactId>playwright</artifactId>
+      <version>${playwright.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.google.guava</groupId>
+      <artifactId>guava</artifactId>
+      <version>${guava.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 

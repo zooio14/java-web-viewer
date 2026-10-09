@@ -1,0 +1,12 @@
+.git
+.github
+.idea
+.vscode
+target
+work
+outputs
+*.log
+.env
+.env.*
+!.env.example
+README.md
