@@ -167,11 +167,13 @@ class BrowserSmokeTest {
                 assertEquals(1280, ((Number) page.locator("#screen").evaluate("canvas => canvas.width")).intValue());
                 page.locator("#address").fill("http://127.0.0.1/");
                 page.locator("#address-form button").click();
-                page.waitForFunction("document.querySelector('#status').classList.contains('error')");
+                com.microsoft.playwright.assertions.PlaywrightAssertions.assertThat(page.locator("#status"))
+                        .hasClass(java.util.regex.Pattern.compile(".*error.*"));
                 page.setViewportSize(390, 844);
-                assertTrue((Boolean) page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "Mobile overflow");
+                assertTrue((Boolean) page.evaluate("() => document.documentElement.scrollWidth <= innerWidth"), "Mobile overflow");
                 page.locator("#disconnect").click();
-                page.waitForFunction("document.querySelector('#connection-label').textContent === 'Desconectado'");
+                com.microsoft.playwright.assertions.PlaywrightAssertions.assertThat(page.locator("#connection-label"))
+                        .hasText("Desconectado");
                 assertFalse(page.locator("#screen").isVisible());
                 assertTrue(errors.isEmpty(), errors.toString());
             }
