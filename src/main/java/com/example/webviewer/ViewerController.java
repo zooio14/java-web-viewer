@@ -29,7 +29,8 @@ public class ViewerController {
 
     @GetMapping("/api/config")
     public Map<String, Object> config() {
-        return Map.of("width", settings.width, "height", settings.height, "allowedDomains", policy.getAllowedDomains());
+        return Map.of("width", settings.width, "height", settings.height, "allowedDomains", policy.getAllowedDomains(),
+                "destinationMode", policy.getDestinationMode());
     }
 
     @PostMapping("/api/session")
@@ -40,7 +41,8 @@ public class ViewerController {
         auth.revoke(previous);
         return ResponseEntity.ok().header("Set-Cookie", cookie(id, request.isSecure(), settings.sessionMaxSeconds))
                 .body(Map.of("width", settings.width, "height", settings.height,
-                        "allowedDomains", policy.getAllowedDomains(), "idleTimeoutSeconds", settings.idleTimeoutSeconds));
+                        "allowedDomains", policy.getAllowedDomains(), "destinationMode", policy.getDestinationMode(),
+                        "idleTimeoutSeconds", settings.idleTimeoutSeconds));
     }
 
     @PostMapping("/api/logout")

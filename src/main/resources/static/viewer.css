@@ -65,6 +65,7 @@ h1 { font-size: clamp(25px, 3vw, 36px); margin: 0 0 15px; letter-spacing: -1px; 
 .domains-details summary { cursor: pointer; }
 #domain-count { margin-left: 6px; color: var(--accent); }
 #allowed-domains { margin: 12px 0 0; padding: 10px 12px 10px 27px; border: 1px solid var(--border); background: var(--panel); border-radius: 8px; max-height: 160px; overflow: auto; line-height: 1.7; word-break: break-all; }
+#public-access-info { max-width: 270px; margin: 12px 0 0; padding: 10px 12px; border: 1px solid var(--border); background: var(--panel); border-radius: 8px; line-height: 1.7; }
 .statusbar { display: flex; justify-content: space-between; gap: 20px; padding: 12px 28px; border-top: 1px solid var(--border); background: var(--panel); color: var(--muted); font-size: 11px; line-height: 1.5; }
 #status { overflow-wrap: anywhere; }
 #status.error { color: #f2b1a5; }

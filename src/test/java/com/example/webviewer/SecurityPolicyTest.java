@@ -18,6 +18,7 @@ class SecurityPolicyTest {
             lookups.incrementAndGet();
             return new InetAddress[]{InetAddress.getByName("93.184.216.34")};
         })) {
+            assertEquals("allowlist", policy.getDestinationMode());
             assertEquals("https://example.com/path", policy.validate(" example.com/path ").toString());
             assertEquals("https://example.com:443/", policy.validate("example.com:443/").toString());
             assertDoesNotThrow(() -> policy.validateRequest("HTTP://www.Example.com/path?x=1"));
@@ -50,6 +51,55 @@ class SecurityPolicyTest {
             "example.com.", "example.com,", "-bad.example.com", "example.invalid"})
     void rejectsBroadInvalidOrLocalAllowlistConfiguration(String value) {
         assertThrows(IllegalArgumentException.class, () -> new SecurityPolicy(value));
+        assertThrows(IllegalArgumentException.class, () -> new SecurityPolicy(value, "public"));
+    }
+
+    @Test
+    void publicModeAllowsRealDomainsOutsideAllowlistWhilePreservingDnsBoundary() throws Exception {
+        AtomicInteger lookups = new AtomicInteger();
+        try (SecurityPolicy policy = new SecurityPolicy("example.com", "public", hostname -> {
+            lookups.incrementAndGet();
+            return new InetAddress[]{InetAddress.getByName("8.8.8.8")};
+        })) {
+            assertEquals("public", policy.getDestinationMode());
+            assertEquals("https://example.net/", policy.validate("example.net/").toString());
+            assertDoesNotThrow(() -> policy.validateRequest("https://www.mozilla.org/"));
+            assertDoesNotThrow(() -> policy.validateRequest("https://user.github.io/"));
+            assertDoesNotThrow(() -> policy.validateRequest("https://github.io/"));
+            assertEquals(0, lookups.get());
+            assertEquals("8.8.8.8", policy.resolvePublic("example.net").get(0).getHostAddress());
+            assertEquals(1, lookups.get());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"http://localhost/", "http://127.0.0.1/", "http://8.8.8.8/",
+            "http://[2001:4860:4860::8888]/", "http://2130706433/", "http://0x7f000001/",
+            "https://example.invalid/", "https://com/", "https://example.local/", "https://foo.internal/",
+            "https://home.arpa/", "https://foo.home.arpa/", "https://user@example.net/", "https://example.net:8080/",
+            "https://example.net./", "https://%65xample.net/", "file:///etc/passwd", "data:text/html,test"})
+    void publicModeStillRejectsLiteralIpsLocalInvalidDomainsAndUnsafeUrls(String value) {
+        try (SecurityPolicy policy = new SecurityPolicy("example.com", "public")) {
+            assertThrows(IllegalArgumentException.class, () -> policy.validateRequest(value));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"all", "open", "", "PUBLICLY", "http"})
+    void invalidDestinationModeFailsStartup(String mode) {
+        assertThrows(IllegalArgumentException.class, () -> new SecurityPolicy("example.com", mode));
+    }
+
+    @Test
+    void publicModeFailsClosedOnPrivateOrMixedDnsForDomainOutsideAllowlist() throws Exception {
+        try (SecurityPolicy privateDns = new SecurityPolicy("example.com", "public", hostname ->
+                new InetAddress[]{InetAddress.getByName("10.0.0.1")});
+             SecurityPolicy mixedDns = new SecurityPolicy("example.com", "public", hostname ->
+                     new InetAddress[]{InetAddress.getByName("8.8.8.8"), InetAddress.getByName("::1")})) {
+            assertDoesNotThrow(() -> privateDns.validateRequest("https://example.net/"));
+            assertThrows(IllegalArgumentException.class, () -> privateDns.resolvePublic("example.net"));
+            assertThrows(IllegalArgumentException.class, () -> mixedDns.resolvePublic("example.net"));
+        }
     }
 
     @ParameterizedTest

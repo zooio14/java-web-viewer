@@ -24,7 +24,7 @@
       </div>
       <form id="address-form" class="address-form">
         <span class="address-icon" aria-hidden="true">↗</span>
-        <label class="sr-only" for="address">Endereço de um site permitido</label>
+        <label class="sr-only" id="address-label" for="address">Endereço de um site permitido</label>
         <input id="address" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Digite um site permitido" disabled>
         <button class="button primary remote-control" type="submit" disabled>Abrir</button>
       </form>
@@ -36,7 +36,7 @@
           <span class="welcome-icon" aria-hidden="true">↗</span>
           <p class="eyebrow">UMA JANELA PARA O SEU NAVEGADOR</p>
           <h1 id="welcome-title">Explore dentro deste espaço.</h1>
-          <p class="welcome-description">Um Chromium no servidor transmite sua tela para cá. Entre com o token de acesso e abra um dos domínios autorizados.</p>
+          <p class="welcome-description" id="welcome-description">Um Chromium no servidor transmite sua tela para cá. Entre com o token de acesso e abra um dos domínios autorizados.</p>
           <form id="login-form" class="login-form">
             <label for="token">Token de acesso</label>
             <div class="login-row">
@@ -49,15 +49,16 @@
         <div class="screen-notice" id="screen-notice" hidden>Preparando o navegador…</div>
       </div>
     </main>
-    <aside class="tools-panel" aria-label="Digitação e domínios autorizados">
+    <aside class="tools-panel" aria-label="Digitação e acesso a sites">
       <form id="text-form" class="text-form">
         <label for="remote-text">Digitar no navegador</label>
         <input id="remote-text" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="1024" placeholder="Toque no campo remoto e escreva aqui" disabled>
         <button class="button subtle remote-control" type="submit" disabled>Enviar texto</button>
       </form>
       <details class="domains-details">
-        <summary>Domínios autorizados <span id="domain-count">—</span></summary>
+        <summary><span id="domains-label">Domínios autorizados</span> <span id="domain-count">—</span></summary>
         <ul id="allowed-domains"><li>Carregando configuração…</li></ul>
+        <p id="public-access-info" hidden>Acesso a sites públicos por HTTP e HTTPS. Endereços locais, IPs literais e redes privadas continuam bloqueados.</p>
       </details>
     </aside>
     <footer class="statusbar">

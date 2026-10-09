@@ -60,7 +60,8 @@ class BrowserSmokeTest {
             exchange.sendResponseHeaders(302, -1); exchange.close();
         });
         fixture.start();
-        try (SecurityPolicy policy = new SecurityPolicy("example.com", hostname -> new InetAddress[]{InetAddress.getByName("93.184.215.14")});
+        try (SecurityPolicy policy = new SecurityPolicy("example.com", "public", hostname -> new InetAddress[]{
+                    InetAddress.getByName(hostname.startsWith("blocked.") ? "127.0.0.1" : "93.184.215.14")});
                 EgressProxy egress = new EgressProxy(policy, (address, port, timeout) -> {
                     assertEquals("93.184.215.14", address.getHostAddress()); assertEquals(80, port);
                     upstreamConnections.incrementAndGet();
@@ -94,8 +95,8 @@ class BrowserSmokeTest {
                 byte[] first = frames.poll(10, TimeUnit.SECONDS); assertNotNull(first, "Initial JPEG missing");
                 BufferedImage image = ImageIO.read(new ByteArrayInputStream(first));
                 assertNotNull(image); assertEquals(1280, image.getWidth()); assertEquals(720, image.getHeight());
-                session.receive("{\"type\":\"navigate\",\"url\":\"http://example.com/fixture\"}");
-                awaitLocation(messages, "http://example.com/fixture");
+                session.receive("{\"type\":\"navigate\",\"url\":\"http://example.net/fixture\"}");
+                awaitLocation(messages, "http://example.net/fixture");
                 assertNotNull(frames.poll(10, TimeUnit.SECONDS));
                 pointer(session, "down", 50, 45); pointer(session, "up", 50, 45);
                 session.receive("{\"type\":\"text\",\"text\":\"Teste remoto\"}");
@@ -124,7 +125,7 @@ class BrowserSmokeTest {
     @Test void realHttpLoginWebsocketOriginCookieLogoutAndHealth() throws Exception {
         SpringApplication application = new SpringApplication(WebViewerApplication.class);
         try (ConfigurableApplicationContext context = application.run("--server.port=0", "--viewer.access-token=" + TOKEN,
-                "--spring.main.banner-mode=off")) {
+                "--viewer.destination-mode=public", "--spring.main.banner-mode=off")) {
             int port = ((WebServerApplicationContext) context).getWebServer().getPort();
             String origin = "http://localhost:" + port;
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
@@ -164,6 +165,7 @@ class BrowserSmokeTest {
                 page.locator("#screen").waitFor(new com.microsoft.playwright.Locator.WaitForOptions()
                         .setState(com.microsoft.playwright.options.WaitForSelectorState.VISIBLE).setTimeout(20000));
                 assertEquals("Sessão conectada", page.locator("#connection-label").textContent());
+                assertEquals("Sites públicos habilitados", page.locator("#domains-label").textContent());
                 assertEquals(1280, ((Number) page.locator("#screen").evaluate("canvas => canvas.width")).intValue());
                 page.locator("#address").fill("http://127.0.0.1/");
                 page.locator("#address-form button").click();

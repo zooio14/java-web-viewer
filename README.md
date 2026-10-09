@@ -2,7 +2,7 @@
 
 Protótipo de navegador remoto com **Java/Spring Boot + Chromium/Playwright**. O Chromium roda no servidor; o frontend recebe imagens JPEG da tela por WebSocket e envia navegação, mouse, rolagem e teclado de volta. O conteúdo remoto não é executado dentro do HTML do visualizador.
 
-O acesso exige um token e só permite os domínios configurados. O projeto foi feito para navegação autorizada e não oferece proxy aberto nem mecanismos para contornar filtros de rede ou controles de acesso dos sites.
+O acesso exige um token. Por padrão, o modo `public` permite abrir sites públicos sem cadastrar cada domínio. O modo `allowlist` restringe a navegação aos domínios configurados. Os dois modos bloqueiam destinos locais e privados. O projeto foi feito para navegação autorizada e não oferece proxy aberto nem mecanismos para contornar filtros de rede ou controles de acesso dos sites.
 
 ## Como funciona
 
@@ -11,12 +11,12 @@ Frontend do visualizador
     ↕ WebSocket autenticado: imagens + comandos
 Spring Boot → Chromium isolado por sessão
     ↕ gateway interno autenticado e validação de destino
-Domínios públicos autorizados
+Sites públicos permitidos pelo modo configurado
 ```
 
 Cada sessão possui seu próprio navegador/contexto, cookies e armazenamento temporários. Encerrar a sessão, expirar o tempo limite ou reiniciar o serviço apaga esse estado. Não há persistência de logins nem compartilhamento de cookies entre usuários. O token do deploy é enviado apenas ao endpoint de login; depois, uma credencial curta em cookie `HttpOnly` e `SameSite=Strict` autentica a conexão. Em HTTPS o cookie também é `Secure`. O frontend não salva o token no armazenamento do navegador ou na URL.
 
-O gateway é um detalhe interno do processo: escuta apenas em loopback, exige uma credencial aleatória e não possui endpoint público. Ele valida cada conexão HTTP/HTTPS e conecta a um endereço IP público previamente verificado, evitando nova resolução DNS entre validação e conexão. A allowlist também se aplica a recursos auxiliares e redirecionamentos: imagens, scripts e APIs hospedados em outros domínios só funcionam depois de autorização explícita.
+O gateway é um detalhe interno do processo: escuta apenas em loopback, exige uma credencial aleatória e não possui endpoint público. Ele valida cada conexão HTTP/HTTPS e conecta a um endereço IP público previamente verificado, evitando nova resolução DNS entre validação e conexão. A política também se aplica a recursos auxiliares e redirecionamentos. Em `allowlist`, imagens, scripts e APIs hospedados em outros domínios exigem autorização na lista. Em `public`, esses recursos podem usar qualquer domínio público válido, mantendo a verificação de DNS e IP.
 
 ## Versões e requisitos
 
@@ -51,7 +51,8 @@ Todas as opções estão em `src/main/resources/application.properties` e podem 
 | --- | --- | --- |
 | `PORT` | `8080` | Porta HTTP; aceita a porta fornecida pelo Railway. |
 | `VIEWER_ACCESS_TOKEN` | vazio | Segredo com pelo menos 32 caracteres. Sem ele, a criação de sessões retorna `503`. |
-| `VIEWER_ALLOWED_DOMAINS` | `wikipedia.org,example.com,developer.mozilla.org` | Lista separada por vírgulas; cada domínio inclui seus subdomínios. |
+| `VIEWER_DESTINATION_MODE` | `public` | `public` permite domínios públicos válidos sem cadastro prévio; `allowlist` restringe os destinos à lista. |
+| `VIEWER_ALLOWED_DOMAINS` | `wikipedia.org,example.com,developer.mozilla.org` | Lista usada em `allowlist`, separada por vírgulas; cada domínio inclui seus subdomínios. |
 | `VIEWER_MAX_SESSIONS` | `2` | Navegadores simultâneos, de 1 a 8. |
 | `VIEWER_IDLE_TIMEOUT_SECONDS` | `300` | Encerramento por inatividade, de 30 a 3600 segundos. |
 | `VIEWER_SESSION_MAX_SECONDS` | `1800` | Duração máxima da sessão, de 60 a 7200 segundos. |
@@ -59,13 +60,23 @@ Todas as opções estão em `src/main/resources/application.properties` e podem 
 | `VIEWER_JPEG_QUALITY` | `70` | Qualidade JPEG, de 40 a 90. |
 | `VIEWER_CHROMIUM_SANDBOX` | `true` | Sandbox do Chromium; depende do suporte a namespaces do host Linux. |
 
-Exemplo de lista restrita:
+Para manter os destinos restritos:
 
 ```bash
+export VIEWER_DESTINATION_MODE=allowlist
 export VIEWER_ALLOWED_DOMAINS=example.com,developer.mozilla.org
 ```
 
-Não são aceitos `*`, endereços IP, `localhost`, credenciais na URL, sufixos públicos como `com.br` ou protocolos além de HTTP/HTTPS. Somente as portas 80/443 são permitidas. DNS que resolve para endereços privados, loopback, link-local, multicast, reservados ou endpoints de metadados é rejeitado, inclusive se a resposta misturar IPs públicos e privados.
+O padrão já permite acessar sites públicos sem enumerar os domínios. Para deixar essa escolha explícita:
+
+```bash
+export VIEWER_DESTINATION_MODE=public
+export VIEWER_CHROMIUM_SANDBOX=true
+```
+
+O token continua obrigatório nesse modo e a interface informa o modo ativo. `public` amplia os destinos permitidos às pessoas autenticadas; não publica uma URL de proxy para terceiros. Use esse modo somente onde você tem autorização para acessar os sites. Permitir o destino não garante compatibilidade com todos os sites: CAPTCHA, DRM e outras limitações estão descritos abaixo.
+
+A lista de domínios não aceita `*` nem sufixos públicos como `com.br`. Em **ambos os modos**, URLs com endereços IP, `localhost`, credenciais ou protocolos além de HTTP/HTTPS são rejeitadas. Somente as portas 80/443 são permitidas. DNS que resolve para endereços privados, loopback, link-local, multicast, reservados ou endpoints de metadados é rejeitado, inclusive se a resposta misturar IPs públicos e privados. Mantenha `VIEWER_CHROMIUM_SANDBOX=true` ao navegar em sites públicos.
 
 ## Docker e Railway
 
@@ -73,7 +84,7 @@ O `Dockerfile` faz o build, incorpora o Chromium correspondente, executa com o u
 
 1. Conecte o serviço Railway ao repositório e mantenha o diretório raiz do projeto.
 2. Nas variáveis do serviço, configure `VIEWER_ACCESS_TOKEN` com um segredo novo de pelo menos 32 caracteres. Gere-o localmente com `openssl rand -hex 32`.
-3. Configure `VIEWER_ALLOWED_DOMAINS` com os destinos que você autoriza. Não coloque tokens no Dockerfile, no código ou no Git.
+3. O modo padrão `public` permite abrir sites públicos sem cadastrar domínios. Você pode explicitá-lo com `VIEWER_DESTINATION_MODE=public`; mantenha `VIEWER_CHROMIUM_SANDBOX=true`. Para preservar o modo restrito anterior, defina `VIEWER_DESTINATION_MODE=allowlist` e configure `VIEWER_ALLOWED_DOMAINS`. Não coloque tokens no Dockerfile, no código ou no Git.
 4. Remova um eventual comando antigo de inicialização que substitua o `ENTRYPOINT`; deixe o Railway construir o Dockerfile. Preserve o domínio público existente e a variável `PORT` fornecida pelo serviço.
 5. Após o deploy, verifique `/health`, abra o frontend por HTTPS, autentique e confirme que uma sessão realmente inicia e recebe imagens.
 
@@ -99,19 +110,20 @@ mvn --batch-mode --no-transfer-progress -Dviewer.browser-tests=true verify
 # Com Docker disponível
 docker build -t java-web-viewer .
 docker run --rm -p 8080:8080 \
-  -e VIEWER_ACCESS_TOKEN -e VIEWER_ALLOWED_DOMAINS java-web-viewer
+  -e VIEWER_ACCESS_TOKEN -e VIEWER_DESTINATION_MODE \
+  -e VIEWER_ALLOWED_DOMAINS java-web-viewer
 ```
 
 O workflow `.github/workflows/build.yml` roda em push, pull request e execução manual: faz build/testes em Java 17 e 25, instala Chromium para o teste real e constrói a imagem Docker. Também executa os testes com o Chromium/driver presentes na imagem construída, usando `pwuser` e fontes montadas somente para o teste. O teste de inicialização da imagem verifica `/health`, frontend, `PORT` customizado e usuário sem privilégios. Os testes de navegador usam conteúdo controlado com sandbox desativado no runner; eles não atestam o sandbox de um deploy Railway nem disponibilidade de todos os sites externos.
 
-`GET /health` retorna `200 {"status":"UP"}` quando o gateway e o executável estão disponíveis, ou `503 {"status":"DOWN"}`. Não exige token, para continuar compatível com o health check do deploy. `GET /api/config` informa dimensões e domínios. O antigo `GET /api/view?url=...` retorna **410 Gone**: use a sessão autenticada na página inicial.
+`GET /health` retorna `200 {"status":"UP"}` quando o gateway e o executável estão disponíveis, ou `503 {"status":"DOWN"}`. Não exige token, para continuar compatível com o health check do deploy. `GET /api/config` informa dimensões, modo ativo e domínios configurados; a lista define os destinos somente em `allowlist`. O antigo `GET /api/view?url=...` retorna **410 Gone**: use a sessão autenticada na página inicial.
 
 ## Limitações do protótipo
 
 - A transmissão é de imagens, com viewport de 1280×720. Não há áudio, WebRTC de vídeo, download de arquivos ou sincronização de clipboard.
 - WebSockets dos sites, service workers, popups e downloads são bloqueados para limitar canais de saída e funções fora do protótipo. O WebSocket entre frontend e servidor continua habilitado.
-- CAPTCHA, autenticação de terceiros, jogos, streaming e DRM podem falhar. Dependências em domínios fora da allowlist também falham; autorize apenas os domínios necessários e confiáveis.
-- A allowlist autoriza todos os subdomínios do domínio escolhido; escolha domínios sob controle confiável. O servidor mantém as conexões externas e continua sujeito às regras da sua rede e às políticas dos sites.
+- CAPTCHA, autenticação de terceiros, jogos, streaming e DRM podem falhar em qualquer modo. Em `allowlist`, dependências em domínios fora da lista também falham; autorize apenas os domínios necessários e confiáveis. O modo `public` remove essa necessidade de cadastro, mantendo as demais limitações.
+- Em `allowlist`, cada domínio autoriza todos os seus subdomínios; escolha domínios sob controle confiável. Em `public`, as pessoas autenticadas podem escolher qualquer domínio público válido. O servidor mantém as conexões externas e continua sujeito às regras da sua rede e às políticas dos sites.
 - Não há contas individuais, recuperação de sessão ou perfis persistentes. Quem possui o token tem autorização para criar sessões dentro dos limites configurados.
 - GitHub Pages não executa Java/Chromium. O backend precisa de um serviço com execução de containers ou de um servidor próprio.
 

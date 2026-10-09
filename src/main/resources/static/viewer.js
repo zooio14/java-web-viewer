@@ -4,7 +4,8 @@
   const ui = Object.fromEntries([
     'screen', 'screen-shell', 'welcome', 'screen-notice', 'login-form', 'token', 'connect',
     'disconnect', 'connection-dot', 'connection-label', 'address-form', 'address',
-    'text-form', 'remote-text', 'allowed-domains', 'domain-count', 'status', 'status-hint'
+    'text-form', 'remote-text', 'allowed-domains', 'domain-count', 'status', 'status-hint',
+    'address-label', 'welcome-description', 'domains-label', 'public-access-info'
   ].map(id => [id, document.getElementById(id)]));
   const canvas = ui.screen;
   const context = canvas.getContext('2d', { alpha: false });
@@ -20,6 +21,7 @@
   let active = false;
   let connecting = false;
   let generation = 0;
+  let destinationMode = 'allowlist';
   let pendingMove = null;
   let moveTimer = null;
   let wheelTimer = null;
@@ -59,6 +61,19 @@
   }
 
   function applyConfig(config) {
+    if (config.destinationMode === 'allowlist' || config.destinationMode === 'public') {
+      destinationMode = config.destinationMode;
+    }
+    const publicAccess = destinationMode === 'public';
+    ui['domains-label'].textContent = publicAccess ? 'Sites públicos habilitados' : 'Domínios autorizados';
+    ui['domain-count'].hidden = publicAccess;
+    ui['allowed-domains'].hidden = publicAccess;
+    ui['public-access-info'].hidden = !publicAccess;
+    ui.address.placeholder = publicAccess ? 'Digite um endereço de site' : 'Digite um site permitido';
+    ui['address-label'].textContent = publicAccess ? 'Endereço de um site público' : 'Endereço de um site permitido';
+    ui['welcome-description'].textContent = publicAccess
+      ? 'Um Chromium no servidor transmite sua tela para cá. Entre com o token de acesso e abra um site público.'
+      : 'Um Chromium no servidor transmite sua tela para cá. Entre com o token de acesso e abra um dos domínios autorizados.';
     if (Number.isInteger(config.width) && Number.isInteger(config.height)
       && config.width > 0 && config.width <= 4096 && config.height > 0 && config.height <= 4096) {
       // Reassigning either dimension clears an already rendered frame.
@@ -187,13 +202,17 @@
         setConnection('connected');
         ui.welcome.hidden = true;
         ui['screen-notice'].hidden = false;
-        ui['screen-notice'].textContent = 'Navegador pronto. Abra um domínio autorizado na barra acima.';
-        status('Sessão conectada. Abra um endereço autorizado.');
+        ui['screen-notice'].textContent = destinationMode === 'public'
+          ? 'Navegador pronto. Abra um site público na barra acima.'
+          : 'Navegador pronto. Abra um domínio autorizado na barra acima.';
+        status(destinationMode === 'public' ? 'Sessão conectada. Abra um endereço de site público.' : 'Sessão conectada. Abra um endereço autorizado.');
         ui.address.focus();
       } else if (message.type === 'location') {
         if (typeof message.url === 'string') ui.address.value = message.url === 'about:blank' ? '' : message.url;
         document.title = typeof message.title === 'string' && message.title ? `${message.title} · Web Viewer` : 'Java Web Viewer · Navegador remoto';
-        status(message.url === 'about:blank' ? 'Navegador pronto. Abra um endereço autorizado.' : 'Página carregada. Clique na tela para interagir.');
+        status(message.url === 'about:blank'
+          ? destinationMode === 'public' ? 'Navegador pronto. Abra um endereço de site público.' : 'Navegador pronto. Abra um endereço autorizado.'
+          : 'Página carregada. Clique na tela para interagir.');
       } else if (message.type === 'error' || message.type === 'status') {
         status(typeof message.message === 'string' ? message.message : 'O servidor atualizou a sessão.', message.type === 'error');
       } else if (message.type === 'ping') {

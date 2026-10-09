@@ -111,6 +111,53 @@ class EgressProxyTest {
     }
 
     @Test
+    void publicModeRequiresAuthenticationAndPinsPublicIpForDomainOutsideAllowlist() throws Exception {
+        AtomicInteger lookups = new AtomicInteger();
+        AtomicInteger connections = new AtomicInteger();
+        try (Upstream upstream = new Upstream();
+             SecurityPolicy policy = new SecurityPolicy("example.com", "public", hostname -> {
+                 assertEquals("example.net", hostname);
+                 lookups.incrementAndGet();
+                 return new InetAddress[]{InetAddress.getByName("8.8.8.8")};
+             });
+             EgressProxy proxy = new EgressProxy(policy, (address, port, timeout) -> {
+                 assertEquals("8.8.8.8", address.getHostAddress());
+                 assertEquals(80, port);
+                 connections.incrementAndGet();
+                 return upstream.connect();
+             })) {
+            assertEquals("127.0.0.1", URI.create(proxy.endpoint()).getHost());
+            assertTrue(exchange(proxy, "GET http://example.net/ HTTP/1.1\r\nHost: example.net\r\n\r\n")
+                    .startsWith("HTTP/1.1 407 "));
+            assertEquals(0, lookups.get());
+            assertEquals(0, connections.get());
+            CompletableFuture<Observed> received = upstream.receiveHttp(0);
+            assertTrue(exchange(proxy, "GET http://example.net/ HTTP/1.1\r\n" + auth(proxy) + "\r\n")
+                    .startsWith("HTTP/1.1 200 "));
+            assertTrue(received.get(5, TimeUnit.SECONDS).header().contains("Host: example.net\r\n"));
+            assertEquals(1, lookups.get());
+            assertEquals(1, connections.get());
+        }
+    }
+
+    @Test
+    void publicModeProxyStillRejectsPrivateDnsAndLiteralIpConnect() throws Exception {
+        AtomicInteger connections = new AtomicInteger();
+        try (SecurityPolicy policy = new SecurityPolicy("example.com", "public", hostname ->
+                new InetAddress[]{InetAddress.getByName("10.0.0.1")});
+             EgressProxy proxy = new EgressProxy(policy, (address, port, timeout) -> {
+                 connections.incrementAndGet();
+                 throw new IOException("Public mode must never connect to private addresses");
+             })) {
+            assertTrue(exchange(proxy, "CONNECT example.net:443 HTTP/1.1\r\n" + auth(proxy) + "\r\n")
+                    .startsWith("HTTP/1.1 403 "));
+            assertTrue(exchange(proxy, "CONNECT 8.8.8.8:443 HTTP/1.1\r\n" + auth(proxy) + "\r\n")
+                    .startsWith("HTTP/1.1 403 "));
+            assertEquals(0, connections.get());
+        }
+    }
+
+    @Test
     void pinsResolvedAddressAndForwardsOneHttpRequestWithoutProxySecretsOrPipelining() throws Exception {
         AtomicInteger lookups = new AtomicInteger();
         AtomicInteger connections = new AtomicInteger();

@@ -126,7 +126,7 @@ final class BrowserSession implements Runnable {
                 latestFrame.set(data);
             });
             text(Map.of("type", "ready", "width", settings.width, "height", settings.height,
-                    "allowedDomains", policy.getAllowedDomains()));
+                    "allowedDomains", policy.getAllowedDomains(), "destinationMode", policy.getDestinationMode()));
             JsonObject stream = new JsonObject();
             stream.addProperty("format", "jpeg");
             stream.addProperty("quality", settings.jpegQuality);
@@ -212,7 +212,7 @@ final class BrowserSession implements Runnable {
         switch (command.get("type").getAsString()) {
             case "navigate" -> {
                 String url = policy.validate(command.get("url").getAsString()).toString();
-                text("status", "Abrindo página autorizada…");
+                text("status", "Abrindo página…");
                 page.navigate(url, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
                 location(page);
             }
@@ -246,11 +246,14 @@ final class BrowserSession implements Runnable {
 
     private void home(Page page) {
         page.navigate("about:blank");
+        String description = policy.getDestinationMode().equals("public")
+                ? "Digite o endereço de um site público na barra acima."
+                : "Digite um domínio autorizado na barra de endereço.";
         page.setContent("""
             <!doctype html><html lang="pt-BR"><meta charset="utf-8">
             <style>body{margin:0;background:#101a2d;color:#edf2ff;font:20px system-ui;display:grid;place-content:center;height:100vh;text-align:center}
-            p{color:#a8bad2;font-size:17px}</style><h1>Navegador remoto</h1><p>Digite um domínio autorizado na barra de endereço.</p></html>
-            """);
+            p{color:#a8bad2;font-size:17px}</style><h1>Navegador remoto</h1><p>%s</p></html>
+            """.formatted(description));
         location(page);
     }
 

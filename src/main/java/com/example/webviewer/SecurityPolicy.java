@@ -28,6 +28,7 @@ import java.util.concurrent.TimeoutException;
 public class SecurityPolicy implements AutoCloseable {
     private static final int MAX_URL_LENGTH = 8192;
     private final Set<String> allowedDomains;
+    private final String destinationMode;
     private final Resolver resolver;
     private final ThreadPoolExecutor dnsWorkers = new ThreadPoolExecutor(2, 2, 0, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(32), runnable -> {
@@ -38,15 +39,29 @@ public class SecurityPolicy implements AutoCloseable {
 
     @Autowired
     public SecurityPolicy(@Value("${viewer.allowed-domains:wikipedia.org,example.com,developer.mozilla.org}")
-                          String configuredDomains) {
-        this(configuredDomains, InetAddress::getAllByName);
+                          String configuredDomains,
+                          @Value("${viewer.destination-mode:public}") String destinationMode) {
+        this(configuredDomains, destinationMode, InetAddress::getAllByName);
+    }
+
+    public SecurityPolicy(String configuredDomains) {
+        this(configuredDomains, "allowlist", InetAddress::getAllByName);
     }
 
     SecurityPolicy(String configuredDomains, Resolver resolver) {
+        this(configuredDomains, "allowlist", resolver);
+    }
+
+    SecurityPolicy(String configuredDomains, String destinationMode, Resolver resolver) {
         this.resolver = resolver;
+        String mode = destinationMode == null ? "" : destinationMode.trim().toLowerCase(Locale.ROOT);
+        if (!mode.equals("allowlist") && !mode.equals("public")) {
+            throw new IllegalArgumentException("VIEWER_DESTINATION_MODE deve ser allowlist ou public.");
+        }
+        this.destinationMode = mode;
         Set<String> domains = new LinkedHashSet<>();
         for (String value : (configuredDomains == null ? "" : configuredDomains).split(",", -1)) {
-            domains.add(requireDomain(value.trim().toLowerCase(Locale.ROOT)));
+            domains.add(requireDomain(value.trim().toLowerCase(Locale.ROOT), false));
         }
         if (domains.isEmpty()) {
             throw new IllegalArgumentException("Configure ao menos um domínio autorizado.");
@@ -70,7 +85,7 @@ public class SecurityPolicy implements AutoCloseable {
         return validateRequest(value);
     }
 
-    /** Strict URL and allowlist validation. DNS is checked at the actual egress boundary. */
+    /** Strict URL and destination-mode validation. DNS is checked at the actual egress boundary. */
     public URI validateRequest(String rawUrl) {
         return validateStructure(rawUrl);
     }
@@ -105,6 +120,10 @@ public class SecurityPolicy implements AutoCloseable {
 
     public Set<String> getAllowedDomains() {
         return allowedDomains;
+    }
+
+    public String getDestinationMode() {
+        return destinationMode;
     }
 
     /** Callers must connect to these addresses without resolving the hostname again. */
@@ -144,14 +163,15 @@ public class SecurityPolicy implements AutoCloseable {
     }
 
     private String requireAllowedHost(String hostname) {
-        String host = requireDomain(hostname == null ? "" : hostname.toLowerCase(Locale.ROOT));
-        if (allowedDomains.stream().noneMatch(domain -> host.equals(domain) || host.endsWith("." + domain))) {
+        boolean publicMode = destinationMode.equals("public");
+        String host = requireDomain(hostname == null ? "" : hostname.toLowerCase(Locale.ROOT), publicMode);
+        if (!publicMode && allowedDomains.stream().noneMatch(domain -> host.equals(domain) || host.endsWith("." + domain))) {
             throw new IllegalArgumentException("Domínio não autorizado: " + host);
         }
         return host;
     }
 
-    private static String requireDomain(String domain) {
+    private static String requireDomain(String domain, boolean publicRequest) {
         if (domain.length() > 253 || domain.endsWith(".") || domain.indexOf('*') >= 0
                 || !domain.matches("[a-z0-9-]+(?:\\.[a-z0-9-]+)+") || InetAddresses.isInetAddress(domain)) {
             throw new IllegalArgumentException("Configure apenas domínios completos, sem curingas, URLs ou IPs.");
@@ -162,10 +182,11 @@ public class SecurityPolicy implements AutoCloseable {
         } catch (IllegalArgumentException ex) {
             throw new IllegalArgumentException("Domínio inválido: " + domain);
         }
-        // Guava's PSL includes private/shared suffixes, preventing com.br/github.io allowlists.
-        if (!parsed.hasPublicSuffix() || parsed.isPublicSuffix()
+        // Shared suffixes cannot become broad allowlist entries. Their public websites may still
+        // be visited in public mode, with DNS vetted separately and every socket pinned.
+        if (!parsed.hasPublicSuffix() || !publicRequest && parsed.isPublicSuffix()
                 || domain.endsWith(".localhost") || domain.endsWith(".local")
-                || domain.endsWith(".internal") || domain.endsWith(".home.arpa")) {
+                || domain.endsWith(".internal") || domain.equals("home.arpa") || domain.endsWith(".home.arpa")) {
             throw new IllegalArgumentException("A allowlist exige domínios específicos com sufixo público válido.");
         }
         return domain;
